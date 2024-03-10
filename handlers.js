@@ -8,8 +8,6 @@ const TeamFortress2 = require('./index.js');
 const Language = require('./language.js');
 const Schema = require('./protobufs/generated/_load.js');
 
-const g_ItemSchemaRetrievalSemaphore = new Semaphore();
-
 const handlers = TeamFortress2.prototype._handlers;
 
 // ClientWelcome, ServerWelcome, ClientGoodbye, and ServerGoodbye
@@ -48,6 +46,10 @@ handlers[Language.ServerGoodbye] = function(body) {
 };
 
 // Item schema
+let g_ItemSchema = null;
+let g_ItemSchemaVersion = null;
+let g_ItemSchemaRetrievalSemaphore = new Semaphore();
+
 handlers[Language.UpdateItemSchema] = async function(body) {
 	let release = await g_ItemSchemaRetrievalSemaphore.waitAsync();
 
@@ -59,7 +61,7 @@ handlers[Language.UpdateItemSchema] = async function(body) {
 
 		this.emit('itemSchema', schemaVersion, schemaUrl);
 
-		if (schemaVersion !== this.itemSchemaVersion) {
+		if (schemaVersion !== g_ItemSchemaVersion) {
 			let client = new HttpClient();
 
 			let result = await client.request({
@@ -71,9 +73,12 @@ handlers[Language.UpdateItemSchema] = async function(body) {
 				throw new Error(`HTTP error ${result.statusCode}`);
 			}
 
-			this.itemSchema = VDF.parse(result.textBody).items_game;
-			this.itemSchemaVersion = schemaVersion;
+			g_ItemSchema = VDF.parse(result.textBody).items_game;
+			g_ItemSchemaVersion = schemaVersion;
 		}
+
+		this.itemSchema = g_ItemSchema;
+		this.itemSchemaVersion = g_ItemSchemaVersion;
 
 		this.emit('itemSchemaLoaded');
 	} catch (err) {
