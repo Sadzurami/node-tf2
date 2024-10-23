@@ -1,4 +1,6 @@
 const ByteBuffer = require('bytebuffer');
+const {Agent:HttpAgent} = require('http');
+const {Agent:HttpsAgent} = require('https');
 const {HttpClient} = require('@doctormckay/stdlib/http');
 const {Semaphore} = require('@doctormckay/stdlib/concurrency.js');
 const SteamID = require('steamid');
@@ -7,6 +9,11 @@ const VDF = require('kvparser');
 const TeamFortress2 = require('./index.js');
 const Language = require('./language.js');
 const Schema = require('./protobufs/generated/_load.js');
+
+const httpClient = new HttpClient({
+	httpAgent: new HttpAgent({ keepAlive: true, timeout: 10000 }),
+	httpsAgent: new HttpsAgent({ keepAlive: true, timeout: 10000 })
+});
 
 const handlers = TeamFortress2.prototype._handlers;
 
@@ -62,9 +69,7 @@ handlers[Language.UpdateItemSchema] = async function(body) {
 		this.emit('itemSchema', schemaVersion, schemaUrl);
 
 		if (schemaVersion !== g_ItemSchemaVersion) {
-			let client = new HttpClient();
-
-			let result = await client.request({
+			let result = await httpClient.request({
 				method: 'get',
 				url: schemaUrl
 			});
