@@ -1,11 +1,19 @@
 const ByteBuffer = require('bytebuffer');
+const {Agent:HttpAgent} = require('http');
+const {Agent:HttpsAgent} = require('https');
 const {HttpClient} = require('@doctormckay/stdlib/http');
+const {Semaphore} = require('@doctormckay/stdlib/concurrency.js');
 const SteamID = require('steamid');
 const VDF = require('kvparser');
 
 const TeamFortress2 = require('./index.js');
 const Language = require('./language.js');
 const Schema = require('./protobufs/generated/_load.js');
+
+const httpClient = new HttpClient({
+	httpAgent: new HttpAgent({ keepAlive: true, timeout: 10000 }),
+	httpsAgent: new HttpsAgent({ keepAlive: true, timeout: 10000 })
+});
 
 const handlers = TeamFortress2.prototype._handlers;
 
@@ -45,26 +53,44 @@ handlers[Language.ServerGoodbye] = function(body) {
 };
 
 // Item schema
+let g_ItemSchema = null;
+let g_ItemSchemaVersion = null;
+let g_ItemSchemaRetrievalSemaphore = new Semaphore();
+
 handlers[Language.UpdateItemSchema] = async function(body) {
+	let release = await g_ItemSchemaRetrievalSemaphore.waitAsync();
+
 	try {
 		let proto = decodeProto(Schema.CMsgUpdateItemSchema, body);
-		this.emit('itemSchema', proto.item_schema_version.toString(16).toUpperCase(), proto.items_game_url);
 
-		let client = new HttpClient();
-		let result = await client.request({
-			method: 'get',
-			url: proto.items_game_url
-		});
+		let schemaVersion = proto.item_schema_version.toString(16).toUpperCase();
+		let schemaUrl = proto.items_game_url;
 
-		if (result.statusCode != 200) {
-			throw new Error(`HTTP error ${result.statusCode}`);
+		this.emit('itemSchema', schemaVersion, schemaUrl);
+
+		if (schemaVersion !== g_ItemSchemaVersion) {
+			let result = await httpClient.request({
+				method: 'get',
+				url: schemaUrl
+			});
+
+			if (result.statusCode != 200) {
+				throw new Error(`HTTP error ${result.statusCode}`);
+			}
+
+			g_ItemSchema = VDF.parse(result.textBody).items_game;
+			g_ItemSchemaVersion = schemaVersion;
 		}
 
-		this.itemSchema = VDF.parse(result.textBody).items_game;
+		this.itemSchema = g_ItemSchema;
+		this.itemSchemaVersion = g_ItemSchemaVersion;
+
 		this.emit('itemSchemaLoaded');
 	} catch (err) {
 		this.emit('debug', `Unable to download items_game.txt: ${err.message}`);
 		this.emit('itemSchemaError', err);
+	} finally {
+		release();
 	}
 };
 
